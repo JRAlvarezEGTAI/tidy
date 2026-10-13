@@ -34,7 +34,7 @@ The pipeline is a cascade. Each layer only sees files the previous one couldn't 
 
 **Scope** (Corporate/Personal) is decided by `scope_by_rules`, then the embedding margin, then the LLM. The order of precedence is:
 1. `personal_name_terms` in the filename
-2. `corporate_terms` in the filename
+2. `corporate_terms` or `corporate_name_terms` (generic company words, filename only) in the filename
 3. `corporate_terms` in the content (career docs are excluded)
 
 A rule hit always overrides the LLM's scope guess. `{scope}` in a `folders` path is replaced with Corporate or Personal. If scope is unknown, the file goes to `_Review/Corporate or Personal/`.
@@ -59,7 +59,7 @@ A rule hit always overrides the LLM's scope guess. `{scope}` in a `folders` path
 - Configuration lives in `DEFAULT_CONFIG`. User overrides in `~/.tidy/config.json` are merged shallowly, so overriding `folders` replaces the whole dict. `load_config` then adds derived `_`-prefixed keys (`_ext_to_cat`, `_image_exts`, `_corp_rx`, `_personal_rx`); put new derived values there rather than recomputing per file. `corporate_terms` / `personal_name_terms` are regex fragments joined into one alternation. `tidy init` seeds only the commonly edited keys.
 - Every user-visible decision carries a `method` (`hash`, `name`, `ext`, `metadata`, `embed`, `llm`, `content`, `no-signal`, `llm-unsure`, `low-confidence`, `no-model`). `plan -v` prints it. Any new path through the code needs one.
 - Tests use the `env` fixture, which isolates `APP_DIR` and creates temp Downloads/Desktop/Documents, and the `ollama` fixture, a fake server on a random port. Its embeddings are a hashed bag-of-words, and its LLM replies follow keyword rules: `zzqx` in the file text → unsure (0), `bank`/`mom`/`family`/`grocery` → Personal, otherwise Corporate. `env` also stubs `has_camera` (always true) and `notify` (collected in `env.notifications`). Use `env.config(**overrides)` and `env.file(name, content)` (backdated past the settle window), and `placed(plan)` for assertions. Give test files distinct contents, or the duplicate layer will catch them.
-- Client/company names are private: they come from `TIDY_CORPORATE_TERMS` in a gitignored `.env` (`load_env`, `ENV_FILES`), never from `DEFAULT_CONFIG`. Tests use fictional names (`acme`, `globex`), and `env` points `ENV_FILES` at the temp dir so a developer's real `.env` never leaks in. Don't commit real names to code, tests or docs.
+- Client/company names are private: they come from `TIDY_CORPORATE_TERMS` / `TIDY_CORPORATE_NAME_TERMS` in a gitignored `.env` (`load_env`, `ENV_FILES`), never from `DEFAULT_CONFIG`. Tests use fictional names (`acme`, `globex`), and `env` points `ENV_FILES` at the temp dir so a developer's real `.env` never leaks in. Don't commit real names to code, tests or docs.
 - macOS-only behavior (`mdls`, `osascript`, `launchctl`, `textutil`) must degrade gracefully on other platforms so the tests run on Linux CI.
 
 ## Known gaps / next work

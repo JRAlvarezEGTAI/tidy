@@ -101,7 +101,7 @@ Your company and client names are the one sensitive input, so they live in a git
 cp .env.example .env    # then edit TIDY_CORPORATE_TERMS
 ```
 
-`TIDY_CORPORATE_TERMS` is a single regex alternation, such as `acme|globex\.?io`. tidy reads `~/.tidy/.env` first, then the repo's `.env`. A real environment variable beats both, and `corporate_terms` in `config.json` beats all of them. `install.sh` copies `.env` into `~/.tidy` (with `--dev`, the symlinked script finds the repo copy).
+`TIDY_CORPORATE_TERMS` is a single regex alternation, such as `acme|globex\.?io`, matched in filenames and document text. `TIDY_CORPORATE_NAME_TERMS` is for company words too generic to trust in a document's text, such as `employee` or `compliance`; it's matched in filenames only, and personal filename terms still win. tidy reads `~/.tidy/.env` first, then the repo's `.env`. A real environment variable beats both, and `corporate_terms` in `config.json` beats all of them. `install.sh` copies `.env` into `~/.tidy` (with `--dev`, the symlinked script finds the repo copy).
 
 ## Config (`~/.tidy/config.json`)
 

@@ -70,6 +70,21 @@ def test_scope_rules_precedence(env):
     assert r("cv.txt", "Acme", "career") == ("personal", "name")
     assert r("letter.pdf", "worked at Acme", "career") == (None, None)  # content alone never makes career corporate
     assert r("cvs_receipt.pdf") == (None, None)                     # 'cv' needs a word boundary
+    assert r("Employee_Change_Form.pdf") == ("corporate", "name")    # filename-only company term...
+    assert r("form.pdf", "employee number 42") == (None, None)       # ...never matched in content
+    assert r("payslip_employee.pdf") == ("personal", "name")         # personal name still wins
+
+
+def test_env_file_supplies_private_terms(env, monkeypatch):
+    env.config()                                    # creates the app dir...
+    tidy.CONFIG_PATH.write_text("{}")              # ...but with no terms in config.json
+    (tidy.APP_DIR / ".env").write_text("# private\nTIDY_CORPORATE_TERMS=initech|hooli\n"
+                                       "TIDY_CORPORATE_NAME_TERMS='user.?stor(y|ies)'\n")
+    cfg = tidy.load_config()
+    assert tidy.scope_by_rules(Path("x.pdf"), "for Hooli", "work", cfg) == ("corporate", "content")
+    assert tidy.scope_by_rules(Path("User Stories.xlsx"), "", "work", cfg) == ("corporate", "name")
+    monkeypatch.setenv("TIDY_CORPORATE_TERMS", "umbrella")          # real environment beats .env
+    assert tidy.scope_by_rules(Path("x.pdf"), "for Hooli", "work", tidy.load_config()) == (None, None)
 
 
 # ───────────── text extraction ─────────────

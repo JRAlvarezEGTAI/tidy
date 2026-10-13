@@ -103,6 +103,7 @@ def env(tmp_path, monkeypatch):
     # Never read the developer's real .env; tests use fictional client names.
     monkeypatch.setattr(tidy, "ENV_FILES", [app / ".env"])
     monkeypatch.delenv("TIDY_CORPORATE_TERMS", raising=False)
+    monkeypatch.delenv("TIDY_CORPORATE_NAME_TERMS", raising=False)
     # Don't call Spotlight in tests; treat every photo as camera-made.
     monkeypatch.setattr(tidy, "has_camera", lambda paths: {p: True for p in paths})
     # Never pop real notifications.
@@ -119,7 +120,7 @@ def env(tmp_path, monkeypatch):
         def config(self, **over):
             cfg = {"scan": [str(self.downloads), str(self.desktop)], "dest": str(self.documents),
                    "ollama_url": "http://127.0.0.1:1", "embed_accept": 0.25, "embed_margin": 0.03,
-                   "corporate_terms": ["acme", "globex"]}
+                   "corporate_terms": ["acme", "globex"], "corporate_name_terms": ["employee"]}
             cfg.update(over)
             app.mkdir(parents=True, exist_ok=True)
             (app / "config.json").write_text(json.dumps(cfg))

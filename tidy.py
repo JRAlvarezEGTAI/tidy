@@ -134,6 +134,9 @@ DEFAULT_CONFIG = {
     # Corporate = YOUR companies and clients, not "issued by any company" (your bank is a corp too).
     # Kept out of the repo: set TIDY_CORPORATE_TERMS in .env (see .env.example).
     "corporate_terms": [],
+    # Company words too generic to trust in content ("employee", "compliance") — filename only.
+    # Set TIDY_CORPORATE_NAME_TERMS in .env.
+    "corporate_name_terms": [],
     # Personal records that often mention your company (resume, payslip) — filename only.
     "personal_name_terms": ["resume", "\\bcv\\b", "cover.?letter", "payslip", "\\b2316\\b", "passport",
                             "\\bnbi\\b", "birth.?cert", "boarding.?pass", "medical", "\\blab.?result"],
@@ -193,12 +196,15 @@ def load_config() -> dict:
     env = load_env()
     if env.get("TIDY_CORPORATE_TERMS"):  # one regex alternation, e.g. acme|globex\.?io
         cfg["corporate_terms"] = [env["TIDY_CORPORATE_TERMS"]]
+    if env.get("TIDY_CORPORATE_NAME_TERMS"):
+        cfg["corporate_name_terms"] = [env["TIDY_CORPORATE_NAME_TERMS"]]
     user = load_json(CONFIG_PATH, {})
     cfg.update(user)
     cfg["_ext_to_cat"] = {e: c for c, exts in cfg["ext_map"].items() for e in exts}
     cfg["_image_exts"] = set(cfg["ext_map"].get("photos", []) + cfg["ext_map"].get("graphics", []))
     rx = lambda terms: re.compile("(" + "|".join(terms) + ")", re.I) if terms else None
     cfg["_corp_rx"] = rx(cfg.get("corporate_terms", []))
+    cfg["_corp_name_rx"] = rx(cfg.get("corporate_terms", []) + cfg.get("corporate_name_terms", []))
     cfg["_personal_rx"] = rx(cfg.get("personal_name_terms", []))
     return cfg
 
@@ -572,7 +578,7 @@ def scope_by_rules(p: Path, snippet: str, cat, cfg: dict):
     name = match_name(p)
     if cfg["_personal_rx"] and cfg["_personal_rx"].search(name):
         return "personal", "name"
-    if cfg["_corp_rx"] and cfg["_corp_rx"].search(name):
+    if cfg["_corp_name_rx"] and cfg["_corp_name_rx"].search(name):
         return "corporate", "name"
     # Content mentions are weaker: your resume mentions your company, so career docs don't count.
     if cat not in (None, "career") and snippet and cfg["_corp_rx"] and cfg["_corp_rx"].search(snippet):
@@ -998,7 +1004,7 @@ def init(args) -> None:
     user = load_json(CONFIG_PATH, {})
     if not user:
         # Seed the keys people actually edit; everything else stays in DEFAULT_CONFIG.
-        # corporate_terms is left out so it doesn't shadow TIDY_CORPORATE_TERMS from .env.
+        # corporate_terms / corporate_name_terms are left out so they don't shadow .env.
         user = {k: DEFAULT_CONFIG[k] for k in ("scan", "dest", "embed_model", "llm_model",
                                                "personal_name_terms",
                                                "embed_accept", "embed_margin", "scope_margin",
