@@ -16,6 +16,7 @@ def test_scan_skips_hidden_partial_fresh_and_folders(env):
     cfg = env.config()
     env.file("keep.pdf")
     env.file(".hidden")
+    env.file("~$port.docx", "Office lock file")
     env.file("movie.mp4.crdownload")
     env.file("just_saved.pdf", age=time.time())
     (env.downloads / "a_folder").mkdir()

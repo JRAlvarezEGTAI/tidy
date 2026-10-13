@@ -211,7 +211,7 @@ def created_time(st) -> float:
 
 def eligible(entry: os.DirEntry, settle_s: float) -> bool:
     name = entry.name
-    if name.startswith(".") or name in JUNK_NAMES:
+    if name.startswith((".", "~$")) or name in JUNK_NAMES:  # ~$ = Office owner/lock file
         return False
     if Path(name).suffix.lower() in PARTIAL_EXTS:
         return False

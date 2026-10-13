@@ -48,7 +48,7 @@ A rule hit always overrides the LLM's scope guess. `{scope}` in a `folders` path
 - **Never delete user files.** Moves only. Duplicates go to `_Review`, not to the trash.
 - **Never overwrite.** On a name clash, `unique_path` appends ` (2)`.
 - **Undo must not remove folders tidy didn't create**, even if they're empty.
-- **Only top-level regular files** are scanned. Skip hidden files, partial downloads, files modified within `settle_minutes`, symlinks, directories (including `.app` bundles), and iCloud dataless placeholders (`SF_DATALESS`).
+- **Only top-level regular files** are scanned. Skip hidden files, Office lock files (`~$…`), partial downloads, files modified within `settle_minutes`, symlinks, directories (including `.app` bundles), and iCloud dataless placeholders (`SF_DATALESS`).
 - **If the model is unavailable, leave documents in place.** Don't send them to `_Review`. Missing models (server up, model not pulled) *do* go to `_Review`.
 - **Plan/apply race:** skip any file whose mtime changed since the plan. Refuse plans older than 24h.
 - **Keep model output tiny:** integer enums only, temperature 0. Don't add free-text fields to the schema.
