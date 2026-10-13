@@ -79,8 +79,14 @@ def test_env_file_supplies_private_terms(env, monkeypatch):
     env.config()                                    # creates the app dir...
     tidy.CONFIG_PATH.write_text("{}")              # ...but with no terms in config.json
     (tidy.APP_DIR / ".env").write_text("# private\nTIDY_CORPORATE_TERMS=initech|hooli\n"
-                                       "TIDY_CORPORATE_NAME_TERMS='user.?stor(y|ies)'\n")
+                                       "TIDY_CORPORATE_NAME_TERMS='user.?stor(y|ies)'\n"
+                                       "TIDY_COMPANY_NAME=Acme Corp\n"
+                                       "TIDY_CLIENT_PIED=Pied Piper = pied.?piper = compression startup\n"
+                                       "TIDY_CLIENT_ROSS=Ross\n")
     cfg = tidy.load_config()
+    assert cfg["company_name"] == "Acme Corp"
+    assert cfg["clients"] == {"Pied Piper": ["pied.?piper", "compression startup"], "Ross": ["Ross", ""]}
+    assert tidy.scope_by_rules(Path("pied_piper_sow.pdf"), "", "work", cfg) == ("corporate", "name")
     assert tidy.scope_by_rules(Path("x.pdf"), "for Hooli", "work", cfg) == ("corporate", "content")
     assert tidy.scope_by_rules(Path("User Stories.xlsx"), "", "work", cfg) == ("corporate", "name")
     monkeypatch.setenv("TIDY_CORPORATE_TERMS", "umbrella")          # real environment beats .env
@@ -167,6 +173,43 @@ def test_absolute_folder_override(env):
     env.file("IMG_2.heic")
     plan = tidy.build_plan(cfg)
     assert plan["items"][0]["dst"] == str(env.root / "Pictures" / YEAR / "IMG_2.heic")
+
+def test_client_folders_inside_corporate(env, ollama):
+    cfg = env.config(ollama_url=ollama.url, company_name="Acme",
+                     clients={"Initech": ["initech", "payroll software platform"], "Hooli": ["hooli", ""]})
+    env.file("Initech_SOW.txt", "statement of work and deliverables")
+    env.file("rollout_notes.txt", "Acme meeting notes about the Hooli rollout")
+    env.file("backlog.txt", "Acme sprint backlog for the payroll release")      # no client named
+    env.file("Acme_policy.txt", "Acme leave policy handbook for staff")
+    env.file("Invoice_Grocery.txt", "Invoice for groceries delivered to my mom")
+    env.file("Invoice_Hooli_Oct.txt", "Invoice for consulting hours in October")
+    plan = tidy.build_plan(cfg)
+    where = placed(plan)
+    assert where["Initech_SOW.txt"].startswith("Corporate/Initech/")        # client in the filename
+    assert where["rollout_notes.txt"].startswith("Corporate/Hooli/")        # client in the content
+    assert where["backlog.txt"].startswith("Corporate/_Internal/")          # never guessed by the model
+    assert where["Acme_policy.txt"].startswith("Corporate/_Internal/")
+    assert where["Invoice_Grocery.txt"] == f"Personal/Finance/{YEAR}"       # Personal never gets a client
+    assert where["Invoice_Hooli_Oct.txt"] == f"Corporate/Hooli/Finance/{YEAR}"  # rule-decided category too
+    methods = {Path(i["src"]).name: i["client_method"] for i in plan["items"]}
+    assert (methods["Initech_SOW.txt"], methods["rollout_notes.txt"], methods["backlog.txt"]) == ("name", "content", "no-client")
+    assert ollama.generate_calls and all(c["prompt"].startswith("You are the CEO of Acme") for c in ollama.generate_calls)
+    assert all(set(c["format"]["properties"]) <= {"c", "s"} for c in ollama.generate_calls)
+
+
+def test_no_clients_keeps_flat_corporate_layout(env, ollama):
+    cfg = env.config(ollama_url=ollama.url)
+    env.file("Invoice_Acme_Oct.txt", "Invoice to Acme for October services")
+    assert placed(tidy.build_plan(cfg))["Invoice_Acme_Oct.txt"] == f"Corporate/Finance/{YEAR}"
+
+
+def test_client_folders_need_no_model(env):
+    cfg = env.config(clients={"Initech": ["initech", ""]})                   # Ollama is down
+    env.file("Invoice_Acme_Oct.txt", "Invoice to Acme for October services")
+    env.file("Invoice_Initech_Oct.txt", "Invoice for October services rendered")
+    where = placed(tidy.build_plan(cfg))
+    assert where["Invoice_Acme_Oct.txt"] == f"Corporate/_Internal/Finance/{YEAR}"
+    assert where["Invoice_Initech_Oct.txt"] == f"Corporate/Initech/Finance/{YEAR}"
 
 
 # ───────────── apply / undo ─────────────

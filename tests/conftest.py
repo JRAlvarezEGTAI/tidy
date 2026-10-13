@@ -106,6 +106,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.delenv("TIDY_CORPORATE_NAME_TERMS", raising=False)
     # Don't call Spotlight in tests; treat every photo as camera-made.
     monkeypatch.setattr(tidy, "has_camera", lambda paths: {p: True for p in paths})
+    # Never launch a real `ollama serve`; "server down" must stay down.
+    monkeypatch.setattr(tidy.Ollama, "binary", classmethod(lambda cls: None))
     # Never pop real notifications.
     sent = []
     monkeypatch.setattr(tidy, "notify", lambda title, msg: sent.append((title, msg)))

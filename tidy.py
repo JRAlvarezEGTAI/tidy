@@ -137,6 +137,12 @@ DEFAULT_CONFIG = {
     # Company words too generic to trust in content ("employee", "compliance") — filename only.
     # Set TIDY_CORPORATE_NAME_TERMS in .env.
     "corporate_name_terms": [],
+    # Client/project folders inside Corporate (Corporate/<client>/<category>), decided by name only:
+    # {name: [regex, note]}. Set TIDY_CLIENT_<KEY>="Name = regex = note" lines in .env. Client regexes
+    # also count as corporate terms. Empty = no client folders.
+    "clients": {},
+    "internal_folder": "_Internal",   # Corporate files for no client (your own company)
+    "company_name": "",               # TIDY_COMPANY_NAME: the model files documents as this company's CEO
     # Personal records that often mention your company (resume, payslip) — filename only.
     "personal_name_terms": ["resume", "\\bcv\\b", "cover.?letter", "payslip", "\\b2316\\b", "passport",
                             "\\bnbi\\b", "birth.?cert", "boarding.?pass", "medical", "\\blab.?result"],
@@ -198,13 +204,28 @@ def load_config() -> dict:
         cfg["corporate_terms"] = [env["TIDY_CORPORATE_TERMS"]]
     if env.get("TIDY_CORPORATE_NAME_TERMS"):
         cfg["corporate_name_terms"] = [env["TIDY_CORPORATE_NAME_TERMS"]]
+    if env.get("TIDY_COMPANY_NAME"):
+        cfg["company_name"] = env["TIDY_COMPANY_NAME"]
+    env_clients = {}
+    for k, v in env.items():
+        if k.startswith("TIDY_CLIENT_"):
+            name, _, rest = (x.strip() for x in v.partition("="))
+            crx, _, desc = (x.strip() for x in rest.partition("="))
+            if name:
+                env_clients[name] = [crx or re.escape(name), desc]
+    if env_clients:
+        cfg["clients"] = env_clients
     user = load_json(CONFIG_PATH, {})
     cfg.update(user)
     cfg["_ext_to_cat"] = {e: c for c, exts in cfg["ext_map"].items() for e in exts}
     cfg["_image_exts"] = set(cfg["ext_map"].get("photos", []) + cfg["ext_map"].get("graphics", []))
     rx = lambda terms: re.compile("(" + "|".join(terms) + ")", re.I) if terms else None
-    cfg["_corp_rx"] = rx(cfg.get("corporate_terms", []))
-    cfg["_corp_name_rx"] = rx(cfg.get("corporate_terms", []) + cfg.get("corporate_name_terms", []))
+    cfg["_clients"] = [(n, re.compile(v[0] if isinstance(v, list) else v, re.I),
+                        v[1] if isinstance(v, list) and len(v) > 1 else "")
+                       for n, v in cfg.get("clients", {}).items()]
+    corp = cfg.get("corporate_terms", []) + [c.pattern for _, c, _ in cfg["_clients"]]
+    cfg["_corp_rx"] = rx(corp)
+    cfg["_corp_name_rx"] = rx(corp + cfg.get("corporate_name_terms", []))
     cfg["_personal_rx"] = rx(cfg.get("personal_name_terms", []))
     return cfg
 
@@ -561,16 +582,18 @@ SCOPES = ["corporate", "personal"]  # LLM answer 1 = corporate, 2 = personal
 
 def llm_prompt(p: Path, snippet: str, cfg: dict, cands=None, scope: bool = False) -> str:
     keys, parts = [], []
+    company = cfg.get("company_name") or "the company"
     if cands:
         keys.append('"c"')
         parts.append("c = folder number (0 = none fit):\n"
                      + "\n".join(f"{i} {cfg['semantic'][c]}" for i, c in enumerate(cands, 1)))
     if scope:
         keys.append('"s"')
-        parts.append("s = 1 if about the company's business, 2 if about the person's own private life, 0 if unsure.\n"
+        parts.append(f"s = 1 if about {company}'s business, 2 if about your own private life, 0 if unsure.\n"
                      f"Company business: {cfg['scope_desc']['corporate']}\n"
                      f"Personal: {cfg['scope_desc']['personal']}")
-    return (f"Classify this file. Answer JSON with {' and '.join(keys)}.\n" + "\n".join(parts)
+    ceo = f"You are the CEO of {cfg['company_name']}, organizing your files. " if cfg.get("company_name") else ""
+    return (f"{ceo}Classify this file. Answer JSON with {' and '.join(keys)}.\n" + "\n".join(parts)
             + f"\nFile: {p.name}\nText: {snippet[:cfg['snippet_chars']] or '(none)'}")
 
 
@@ -586,15 +609,30 @@ def scope_by_rules(p: Path, snippet: str, cat, cfg: dict):
     return None, None
 
 
+def client_by_rules(p: Path, snippet: str, cfg: dict):
+    """The client named earliest in the filename, else earliest in the content."""
+    def earliest(text):
+        hits = [(m.start(), n) for n, rx, _ in cfg["_clients"] for m in [rx.search(text)] if m]
+        return min(hits)[1] if hits else None
+    name = earliest(match_name(p))
+    if name:
+        return name, "name"
+    name = earliest(snippet) if snippet else None
+    return (name, "content") if name else (None, None)
+
+
 # ───────────────────────────── layers 2 + 3: semantic ─────────────────────────────
 
 def semantic_pass(pending: list, known: dict, cfg: dict, stats: dict):
     """pending: documents needing a category. known: {path: category} already set by rules,
-    needing only Corporate/Personal. Returns (categories, scopes).
-    categories[p] = (cat|None, method, score); scopes[p] = (scope|None, method)."""
-    cats, scopes = {}, {}
+    needing only Corporate/Personal. Returns (categories, scopes, clients).
+    categories[p] = (cat|None, method, score); scopes[p] = (scope|None, method);
+    clients[p] = (client|None, method) for Corporate documents when clients are configured
+    (None = the internal folder). Clients come from name rules only: a 1.5B model asked to pick
+    one mostly guessed, and the extra question made its category answers worse."""
+    cats, scopes, clients = {}, {}, {}
     if not pending and not known:
-        return cats, scopes
+        return cats, scopes, clients
     allp = pending + list(known)
     info(f"Reading {len(allp)} document(s)…")
     snippets = {p: extract_text(p, cfg["snippet_chars"]) for p in allp}
@@ -610,8 +648,18 @@ def semantic_pass(pending: list, known: dict, cfg: dict, stats: dict):
         if s_:
             scopes[p] = (s_, m)
     unscoped_known = [p for p in known if p not in scopes]
+
+    def finish():
+        if cfg["_clients"]:
+            for p in allp:
+                cat = known.get(p) or cats.get(p, (None,))[0]
+                if cat in cfg["semantic"] and scopes.get(p, (None,))[0] == "corporate":
+                    c, m = client_by_rules(p, snippets[p], cfg)
+                    clients[p] = (c, m) if c else (None, "no-client")
+        return cats, scopes, clients
+
     if not todo and not unscoped_known:
-        return cats, scopes
+        return finish()
 
     ol = Ollama(cfg)
     try:
@@ -621,7 +669,7 @@ def semantic_pass(pending: list, known: dict, cfg: dict, stats: dict):
                 cats[p] = (None, "no-model", None)
             for p in unscoped_known:
                 scopes[p] = (None, "no-model")
-            return cats, scopes
+            return finish()
         have = ol.models()
         emb_ok = model_present(cfg["embed_model"], have)
         llm_ok = model_present(cfg["llm_model"], have)
@@ -707,16 +755,19 @@ def semantic_pass(pending: list, known: dict, cfg: dict, stats: dict):
     finally:
         ol.close()
         stats["model_seconds"] = round(ol.seconds, 1)
-    return cats, scopes
+    return finish()
 
 
 # ───────────────────────────── plan / apply / undo ─────────────────────────────
 
-def destination(p: Path, cat: str, scope, cfg: dict) -> Path:
+def destination(p: Path, cat: str, scope, cfg: dict, client=None) -> Path:
     folder = cfg["folders"].get(cat, cfg["folders"]["other"])
     if "{scope}" in folder:
         if scope:
-            folder = folder.replace("{scope}", scope.capitalize())
+            label = scope.capitalize()
+            if scope == "corporate" and cfg.get("_clients"):
+                label += "/" + (client or cfg["internal_folder"])
+            folder = folder.replace("{scope}", label)
         else:
             folder = cfg["folders"]["unclear_scope"] + "/" + folder.split("/")[-1]
     d = expand(folder) if folder.startswith(("~", "/")) else expand(cfg["dest"]) / folder
@@ -735,19 +786,20 @@ def build_plan(cfg: dict) -> dict:
     rule_decided, pending = rule_pass([p for p in files if p not in dups], cfg)
     decided.update(rule_decided)
     known = {p: c for p, (c, _, _) in rule_decided.items() if c in cfg["semantic"]}
-    cats, scopes = semantic_pass(pending, known, cfg, stats)
+    cats, scopes, clients = semantic_pass(pending, known, cfg, stats)
     decided.update(cats)
 
     items = []
     for p, (cat, method, score) in sorted(decided.items(), key=lambda kv: str(kv[0])):
         scope, smethod = scopes.get(p, (None, None)) if cat in cfg["semantic"] else (None, None)
+        client, cmethod = clients.get(p, (None, None)) if scope == "corporate" else (None, None)
         if cat is None or smethod == "no-model":
             stats["left_in_place"] += 1
             continue
         try:
-            items.append({"src": str(p), "dst": str(destination(p, cat, scope, cfg)), "cat": cat,
+            items.append({"src": str(p), "dst": str(destination(p, cat, scope, cfg, client)), "cat": cat,
                           "method": method, "score": score, "scope": scope, "scope_method": smethod,
-                          "mtime": p.stat().st_mtime})
+                          "client": client, "client_method": cmethod, "mtime": p.stat().st_mtime})
         except OSError:
             pass
     stats["seconds"] = round(time.time() - t0, 1)
@@ -776,7 +828,7 @@ def print_plan(plan: dict, cfg: dict, verbose: bool) -> None:
         group = by_folder[folder]
         methods = {}
         for it in group:
-            key = it["method"] + (f"+{it['scope_method']}" if it.get("scope_method") else "")
+            key = it["method"] + "".join(f"+{it[k]}" for k in ("scope_method", "client_method") if it.get(k))
             methods[key] = methods.get(key, 0) + 1
         m = ", ".join(f"{k} {v}" for k, v in sorted(methods.items()))
         print(f"  {folder:<40} {len(group):>4}   ({m})")
@@ -786,7 +838,7 @@ def print_plan(plan: dict, cfg: dict, verbose: bool) -> None:
                 print(f"      {short(it['src'])}  [{it['method']}{sc}]")
     if left:
         print("\n" + left)
-    print("\nMethod key: category method + scope method (name, content, embed, llm).")
+    print("\nMethod key: category method + scope method + client method (name, content, embed, llm).")
     print(f"Planned in {s.get('seconds', 0)}s (model time {s.get('model_seconds', 0)}s). Nothing has moved yet.")
 
 
