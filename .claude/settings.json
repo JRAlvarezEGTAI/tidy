@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m pytest:*)",
+      "Bash(python3 tidy.py plan:*)",
+      "Bash(python3 tidy.py doctor)",
+      "Bash(python3 -m py_compile:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Bash(python3 tidy.py apply:*)",
+      "Bash(tidy apply:*)",
+      "Bash(rm -rf ~/Documents:*)",
+      "Read(~/.ssh/**)"
+    ]
+  }
+}

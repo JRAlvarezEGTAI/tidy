@@ -1,0 +1,16 @@
+[project]
+name = "tidy"
+version = "0.2.0"
+description = "Local, low-RAM file organizer for macOS (rules → embeddings → tiny constrained LLM)."
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+pdf = ["pypdf>=4"]
+dev = ["pytest>=8", "pypdf>=4"]
+
+[project.scripts]
+tidy = "tidy:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
