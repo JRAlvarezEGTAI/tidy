@@ -138,8 +138,9 @@ DEFAULT_CONFIG = {
     # Set TIDY_CORPORATE_NAME_TERMS in .env.
     "corporate_name_terms": [],
     # Client/project folders inside Corporate (Corporate/<client>/<category>), decided by name only:
-    # {name: [regex, note]}. Set TIDY_CLIENT_<KEY>="Name = regex = note" lines in .env. Client regexes
-    # also count as corporate terms. Empty = no client folders.
+    # {name: [regex, note, filename-only regex]}. Set TIDY_CLIENT_<KEY>="Name = regex = note = filename
+    # regex" lines in .env; the last two are optional. Generic words ("inventory") belong in the
+    # filename-only regex. Client regexes also count as corporate terms. Empty = no client folders.
     "clients": {},
     "internal_folder": "_Internal",   # Corporate files for no client (your own company)
     "company_name": "",               # TIDY_COMPANY_NAME: the model files documents as this company's CEO
@@ -209,10 +210,9 @@ def load_config() -> dict:
     env_clients = {}
     for k, v in env.items():
         if k.startswith("TIDY_CLIENT_"):
-            name, _, rest = (x.strip() for x in v.partition("="))
-            crx, _, desc = (x.strip() for x in rest.partition("="))
-            if name:
-                env_clients[name] = [crx or re.escape(name), desc]
+            name, crx, desc, name_rx = ([x.strip() for x in v.split("=", 3)] + ["", "", ""])[:4]
+            if name:  # no regexes at all: match the name itself
+                env_clients[name] = [crx or ("" if name_rx else re.escape(name)), desc, name_rx]
     if env_clients:
         cfg["clients"] = env_clients
     user = load_json(CONFIG_PATH, {})
@@ -220,12 +220,17 @@ def load_config() -> dict:
     cfg["_ext_to_cat"] = {e: c for c, exts in cfg["ext_map"].items() for e in exts}
     cfg["_image_exts"] = set(cfg["ext_map"].get("photos", []) + cfg["ext_map"].get("graphics", []))
     rx = lambda terms: re.compile("(" + "|".join(terms) + ")", re.I) if terms else None
-    cfg["_clients"] = [(n, re.compile(v[0] if isinstance(v, list) else v, re.I),
-                        v[1] if isinstance(v, list) and len(v) > 1 else "")
-                       for n, v in cfg.get("clients", {}).items()]
-    corp = cfg.get("corporate_terms", []) + [c.pattern for _, c, _ in cfg["_clients"]]
+    # (name, regex for filename and text, regex for filename only)
+    cfg["_clients"] = []
+    for n, v in cfg.get("clients", {}).items():
+        v = (v if isinstance(v, list) else [v]) + ["", ""]
+        named = "|".join(x for x in (v[0], v[2]) if x)
+        never = "(?!)"  # an empty text regex means filename-only
+        cfg["_clients"].append((n, re.compile(v[0] or never, re.I), re.compile(named or never, re.I)))
+    corp = cfg.get("corporate_terms", []) + [c.pattern for _, c, _ in cfg["_clients"] if c.pattern != "(?!)"]
     cfg["_corp_rx"] = rx(corp)
-    cfg["_corp_name_rx"] = rx(corp + cfg.get("corporate_name_terms", []))
+    cfg["_corp_name_rx"] = rx(corp + [c.pattern for _, _, c in cfg["_clients"]]
+                              + cfg.get("corporate_name_terms", []))
     cfg["_personal_rx"] = rx(cfg.get("personal_name_terms", []))
     return cfg
 
@@ -611,13 +616,13 @@ def scope_by_rules(p: Path, snippet: str, cat, cfg: dict):
 
 def client_by_rules(p: Path, snippet: str, cfg: dict):
     """The client named earliest in the filename, else earliest in the content."""
-    def earliest(text):
-        hits = [(m.start(), n) for n, rx, _ in cfg["_clients"] for m in [rx.search(text)] if m]
+    def earliest(text, which):
+        hits = [(m.start(), c[0]) for c in cfg["_clients"] for m in [c[which].search(text)] if m]
         return min(hits)[1] if hits else None
-    name = earliest(match_name(p))
+    name = earliest(match_name(p), 2)
     if name:
         return name, "name"
-    name = earliest(snippet) if snippet else None
+    name = earliest(snippet, 1) if snippet else None
     return (name, "content") if name else (None, None)
 
 

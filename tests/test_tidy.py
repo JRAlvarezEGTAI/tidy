@@ -82,10 +82,22 @@ def test_env_file_supplies_private_terms(env, monkeypatch):
                                        "TIDY_CORPORATE_NAME_TERMS='user.?stor(y|ies)'\n"
                                        "TIDY_COMPANY_NAME=Acme Corp\n"
                                        "TIDY_CLIENT_PIED=Pied Piper = pied.?piper = compression startup\n"
-                                       "TIDY_CLIENT_ROSS=Ross\n")
+                                       "TIDY_CLIENT_ROSS=Ross\n"
+                                       "TIDY_CLIENT_STOCK=Stockroom = stockroom = ERP = inventory|item.?master\n"
+                                       "TIDY_CLIENT_MESA=Mesa = = a town name too = \\bmesa\\b\n")
     cfg = tidy.load_config()
     assert cfg["company_name"] == "Acme Corp"
-    assert cfg["clients"] == {"Pied Piper": ["pied.?piper", "compression startup"], "Ross": ["Ross", ""]}
+    assert cfg["clients"] == {"Pied Piper": ["pied.?piper", "compression startup", ""], "Ross": ["Ross", "", ""],
+                              "Stockroom": ["stockroom", "ERP", "inventory|item.?master"],
+                              "Mesa": ["", "a town name too", "\\bmesa\\b"]}
+    by = lambda name, text="": tidy.client_by_rules(Path(name), text, cfg)
+    assert by("Parts_Inventory.xlsx") == ("Stockroom", "name")                # filename-only pattern...
+    assert by("notes.pdf", "inventory of ideas") == (None, None)              # ...never matched in text
+    assert by("notes.pdf", "the stockroom move") == ("Stockroom", "content")
+    assert by("Mesa_quote.pdf") == ("Mesa", "name")                           # filename-only client...
+    assert by("letter.pdf", "office in Mesa, Arizona") == (None, None)        # ...ignores the text
+    assert tidy.scope_by_rules(Path("letter.pdf"), "office in Mesa", "legal", cfg) == (None, None)
+    assert tidy.scope_by_rules(Path("item_master.csv"), "", "finance", cfg) == ("corporate", "name")
     assert tidy.scope_by_rules(Path("pied_piper_sow.pdf"), "", "work", cfg) == ("corporate", "name")
     assert tidy.scope_by_rules(Path("x.pdf"), "for Hooli", "work", cfg) == ("corporate", "content")
     assert tidy.scope_by_rules(Path("User Stories.xlsx"), "", "work", cfg) == ("corporate", "name")
