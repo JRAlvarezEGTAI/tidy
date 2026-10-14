@@ -929,13 +929,15 @@ def notify(title: str, msg: str) -> None:
         (b for b in ("/opt/homebrew/bin/terminal-notifier", "/usr/local/bin/terminal-notifier")
          if os.path.exists(b)), None)
     try:
-        if tn and RUN_COMMAND.exists():
-            subprocess.run([tn, "-title", title, "-message", msg, "-group", "tidy",
-                            "-execute", f"open '{RUN_COMMAND}'"], timeout=10)
-        else:
-            subprocess.run(["osascript", "-e",
-                            f"display notification {json.dumps(msg)} with title {json.dumps(title)}"],
-                           timeout=10)
+        # terminal-notifier exits non-zero when macOS has its notifications turned off;
+        # fall back to a plain notification instead of failing silently.
+        if tn and RUN_COMMAND.exists() and subprocess.run(
+                [tn, "-title", title, "-message", msg, "-group", "tidy", "-execute", f"open '{RUN_COMMAND}'"],
+                capture_output=True, timeout=10).returncode == 0:
+            return
+        subprocess.run(["osascript", "-e",
+                        f"display notification {json.dumps(msg)} with title {json.dumps(title)}"],
+                       capture_output=True, timeout=10)
     except Exception:
         pass
 

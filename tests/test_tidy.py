@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 import tidy
-from conftest import placed
+from conftest import REAL_NOTIFY, placed
 
 YEAR = str(datetime.fromtimestamp(time.time() - 3600).year)
 
@@ -302,6 +302,19 @@ def test_watch_notifies_once_per_batch_with_cooldown(env):
     tidy.STATE_PATH.write_text(json.dumps(state))
     tidy.watch_check(cfg)
     assert len(env.notifications) == 2 and "4 files" in env.notifications[1][1]
+
+
+def test_notify_falls_back_when_terminal_notifier_is_blocked(env, monkeypatch):
+    calls = []
+    def run(cmd, **kw):
+        calls.append(cmd[0])
+        return type("R", (), {"returncode": 3 if cmd[0] == "/bin/tn" else 0})()
+    tidy.APP_DIR.mkdir(parents=True, exist_ok=True)
+    tidy.RUN_COMMAND.write_text("#!/bin/bash\n")      # inside env's temp app dir
+    monkeypatch.setattr(tidy.shutil, "which", lambda name: "/bin/tn")
+    monkeypatch.setattr(tidy.subprocess, "run", run)
+    REAL_NOTIFY("Tidy", "5 files waiting")
+    assert calls == ["/bin/tn", "osascript"]
 
 
 def test_watch_below_threshold_is_silent(env):

@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import tidy  # noqa: E402
 
 OLD = time.time() - 3600  # older than the settle window
+REAL_NOTIFY = tidy.notify  # `env` stubs notify(); tests of notify() itself use this
 
 
 def fake_vec(text: str) -> list:
